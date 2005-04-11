@@ -5,25 +5,22 @@ package Config::Cascade;
 use warnings;
 use strict;
 
-no strict 'refs';
-
-use DBI;
 use Regexp::Common;
 
-our %Options;
-our %configValidation;
+my %Options;
+my %configValidation;
 
 =head1 NAME
 
-Config::Cascade
+Config::Cascade - simple configuration file framework for managing multi-level configurations, with regexp validation.
 
 =head1 VERSION
 
-Version 0.01
+Version 0.02
 
 =cut
 
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 
 =head1 SYNOPSIS
 
@@ -42,11 +39,11 @@ Example:
 					configDir => '/etc/Frood', 
 					globalConfig => 'global.cfg', 
 					configFile => 'example.cfg',
-					validate => (
-						host => (type => 'fqdn'),
-						port => (type => 'regexp', args=> 'RE::num::int'),
-						url => (type => 'regexp', args => '^http:'),
-						),
+					validate => {
+						host => {type => 'fqdn'},
+						port => {type => 'regexp', args=> 'RE::num::int'},
+						url => {type => 'regexp', args => '^http:'},
+						},
  				     );
 
     print $config{host};
@@ -67,7 +64,7 @@ int    - Matches the equiv of $RE{num}{int}
 
 fqdn   - Matches fully qualified domain names for formatting, using $RE{net}{domain}
 
-regexp - Matches a free form regular expression, or refers to an entry in Regexp::Common. This requires an optional argument of a vlaid regular expression, or RE reference. Specifying 'RE::' informs the parser a Regexp::Common regexp is being invoked, with subsequent delimited entries corresponding to Regexp::Common's multi-level hash syntax. Otherwise, the contents of args will be precompiled as-is and matched accordingly.
+regexp - Matches a free form regular expression, or refers to an entry in Regexp::Common. This requires an optional argument of a valid regular expression, or RE reference. Specifying 'RE::' informs the parser a Regexp::Common regexp is being invoked, with subsequent delimited entries corresponding to Regexp::Common's multi-level hash syntax. Otherwise, the contents of args will be precompiled as-is and matched accordingly.
 
 string - Matches the equiv of /\w+/
 
@@ -105,7 +102,7 @@ options then override any loaded settings that collide.
 sub new { 
 	my ($class, $hashref) = @_;
 
-	our %Options = %{$hashref};
+	%Options = %{$hashref};
 	my %running;						# The current config hash, as it passes from phase to phase.
 	my %global;						# Application specific config
 	my %specific;						# Application specific config
@@ -159,7 +156,7 @@ sub new {
 	}
 
 	foreach my $key ( keys %specific ) {
-		if($global{$key} && $Options{debug}) {
+		if(exists $global{$key} && $Options{debug}) {
 			warn "Specific option $key overriding global value ($running{$key}) with:$specific{$key}\n";
 		}
 		
@@ -179,31 +176,29 @@ sub new {
 
 sub loadConfigFile {
         my $target = shift;
-	my %hash;
+	my %hash; local *IN;
 
-        if (open(IN, $target)) {
-                while(<IN>) {
-                        chomp;
-                        my $line = $_; $line =~ s/^\s+//;
-                        next if $line eq '';
-                        my ($command, $opt) = $line =~ /^(\w+)\s*(.*)/;
+        open(IN, $target) or die "Error opening config file ($target): $!\n"; 
+        while(<IN>) {
+		chomp;
+		my $line = $_; $line =~ s/^\s+//;
+		next if $line eq '';
+		my ($command, $opt) = $line =~ /^(\w+)\s*(.*)/;
 
-			# Check and expand aliases
-			if(!$Options{noValidation} && $configValidation{$command}{type} eq 'alias') {
-				$command = $configValidation{$command}{arg};
+		# Check and expand aliases
+		if(!$Options{noValidation} && $configValidation{$command}{type} eq 'alias') {
+			$command = $configValidation{$command}{arg};
 		
-				if($hash{$command} && $hash{$command} ne $opt) {	# Alias expansion collision
-				   warn "Alias expansion for $command has resulted in a collision, skipping alias\n";
-				}
+			if($hash{$command} && $hash{$command} ne $opt) {	# Alias expansion collision
+				warn "Alias expansion for $command has resulted in a collision, skipping alias\n";
 			}
-			else { $hash{$command} = $opt; }
+		}
+		else { $hash{$command} = $opt; }
 
-                        warn "Config($target): $command = $opt\n" if $Options{debug};
-                }
-                close(IN);
-                return %hash;
+                warn "Config($target): $command = $opt\n" if $Options{debug};
         }
-        else { die "Error opening config file ($target): $!\n"; }
+        close(IN);
+        return %hash;
 }
 
 sub loadDefaultValidation {
@@ -214,7 +209,7 @@ sub loadDefaultValidation {
 
 	return(0) unless ( -e "$dir/$target" ); # Fail quietly if it doesn't exist, as it may not be in use
 
-	my %hash;
+	my %hash; local *IN;
 
 	if(open(IN, "$dir/$target")) {
 		my $count = 0;
@@ -262,13 +257,15 @@ sub constructValidation {
 	# Example:
 	# url regexp ^http://.*[\s*|$] 
 
-	my $success = 1;
+	my $success = 1;	# Failures set success to 0 and keep processing, to report the most errors 
+				# possible before bailing out.
+
 	foreach my $option (keys %configValidation) {
 		if($configValidation{$option}{type} eq 'regexp' ) {
 		   	if ($configValidation{$option}{arg} =~ /^RE::(.*)\s*/) {
 				# Translate :: delimiter for search into $RE{}{} multi level hash structure.
 				my @levels = split /::/, $1; 
-				my $regexp = \%RE; 
+				$regexp = \%RE; 
 				for my $REid (@levels) {			# Thanks to bline for an elegant solution
 					if ( defined $regexp->{$REid} ) { $regexp = $regexp->{$REid}; }
 					else {
@@ -374,7 +371,8 @@ sub parseCommandLine  {
 Bill Nash, C<< <billn@billn.net> >>
 
 =head1 ACKNOWLEDGEMENTS
-Thanks go to bline, dngor, the letter P, and the number 2.
+
+Thanks go to bline, dngor, Somni, the letter P, and the number 2.
 
 =head1 COPYRIGHT & LICENSE
 
